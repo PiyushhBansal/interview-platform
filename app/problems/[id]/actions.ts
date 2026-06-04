@@ -1,9 +1,11 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { submissions, problems } from "@/db/schema";
+import { submissions, problems, interviewSessions } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { GoogleGenAI } from "@google/genai";
+import { auth } from "@clerk/nextjs/server";
+
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
@@ -12,9 +14,15 @@ export async function submitSolution(input: {
   code: string;
   language: string;
 }) {
+  const { userId } = await auth();
+  if (!userId) {
+    throw new Error("You must be signed in to submit a solution.");
+  }
+
   const [inserted] = await db
     .insert(submissions)
     .values({
+      userId,
       problemId: input.problemId,
       code: input.code,
       language: input.language,
@@ -76,4 +84,16 @@ Keep the response under 200 words. Use clear, friendly tone.`;
     .where(eq(submissions.id,submissionId));
     
   return { review: reviewText };
+}
+
+
+export async function startInterview(input: { problemId:number}){
+  const {userId} = await auth();
+  if(!userId){
+    throw new Error("You must be signed in to start an interview.");
+  }
+
+  const [session] = await db.insert(interviewSessions).values({userId,problemId:input.problemId}).returning();
+
+  return {sessionId : session.id};
 }

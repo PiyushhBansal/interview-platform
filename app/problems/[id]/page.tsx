@@ -3,6 +3,8 @@ import {problems} from "@/db/schema";
 import {eq} from "drizzle-orm";
 import {notFound} from "next/navigation";
 import CodeEditor from "@/components/CodeEditor";
+import StartInterviewButton from "@/components/StartInterviewButton";
+
 
 export default async function ProblemDetailPage({
     params,
@@ -30,6 +32,9 @@ export default async function ProblemDetailPage({
                     {problem.difficulty} · {problem.topic}
                 </p>
                 <p className="text-base leading-relaxed">{problem.description}</p>
+                                <div className="my-6">
+                    <StartInterviewButton problemId={problem.id} />
+                </div>
                 <CodeEditor problemId={problem.id} />
         </main>
     )
