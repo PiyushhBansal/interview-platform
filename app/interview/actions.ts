@@ -20,6 +20,28 @@ type Phase =
   | "INTRO" | "APPROACH" | "TRANSITION_TO_CODE" | "CODING" | "SILENT_CHECK"
   | "DRY_RUN" | "COMPLEXITY" | "WRAP_UP" | "EVALUATION" | "COMPLETED";
 
+/** Start an interview on a specific problem, or a random one if no id given. */
+export async function startInterviewOn(problemId?: number) {
+  const { userId } = await auth();
+  if (!userId) throw new Error("You must be signed in to start an interview.");
+
+  let pid = problemId;
+  if (pid == null) {
+    const all = await db.select({ id: problems.id }).from(problems);
+    if (all.length === 0) throw new Error("No problems available.");
+    // Deterministic-free pick: use current time modulo count (server-side).
+    const idx = Date.now() % all.length;
+    pid = all[idx].id;
+  }
+
+  const [session] = await db
+    .insert(interviewSessions)
+    .values({ userId, problemId: pid })
+    .returning();
+
+  return { sessionId: session.id };
+}
+
 async function ownedSession(sessionId: number) {
   const { userId } = await auth();
   if (!userId) throw new Error("Not signed in.");

@@ -24,9 +24,9 @@ const DIM_LABELS: { key: keyof Scores; label: string }[] = [
 ];
 
 function band(n: number) {
-  if (n >= 80) return { label: "Strong", color: "text-emerald-400", bar: "bg-emerald-500" };
-  if (n >= 55) return { label: "Decent", color: "text-amber-400", bar: "bg-amber-500" };
-  return { label: "Needs work", color: "text-red-400", bar: "bg-red-500" };
+  if (n >= 80) return { label: "Strong", color: "#6ee7b7" };
+  if (n >= 55) return { label: "Decent", color: "#fbbf24" };
+  return { label: "Needs work", color: "#fb7185" };
 }
 
 export default async function ReportPage({
@@ -47,11 +47,7 @@ export default async function ReportPage({
     .where(eq(interviewSessions.id, sessionId));
   if (!session || session.userId !== userId) notFound();
 
-  const [problem] = await db
-    .select()
-    .from(problems)
-    .where(eq(problems.id, session.problemId));
-
+  const [problem] = await db.select().from(problems).where(eq(problems.id, session.problemId));
   const [report] = await db
     .select()
     .from(interviewReports)
@@ -59,15 +55,15 @@ export default async function ReportPage({
 
   if (!report) {
     return (
-      <main className="max-w-2xl mx-auto p-10 text-center">
-        <h1 className="text-2xl font-bold mb-3">Report not ready</h1>
-        <p className="text-zinc-500 mb-6">
-          This interview doesn&apos;t have a generated report yet.
-        </p>
-        <Link href={`/interview/${sessionId}`} className="text-indigo-500 hover:underline">
-          ← Back to interview
-        </Link>
-      </main>
+      <div className="app-dark">
+        <main className="container" style={{ textAlign: "center", maxWidth: 640 }}>
+          <h1 className="page-title">Report not ready</h1>
+          <p className="page-sub" style={{ marginBottom: "1.5rem" }}>
+            This interview doesn&apos;t have a generated report yet.
+          </p>
+          <Link href={`/interview/${sessionId}`} className="abtn">← Back to interview</Link>
+        </main>
+      </div>
     );
   }
 
@@ -76,69 +72,58 @@ export default async function ReportPage({
   const radarData = DIM_LABELS.map((d) => ({ dimension: d.label, score: scores[d.key] }));
 
   return (
-    <main className="max-w-4xl mx-auto p-6 md:p-10">
-      <div className="flex items-center justify-between mb-2">
-        <Link href="/dashboard" className="text-sm text-zinc-500 hover:text-zinc-300">← Dashboard</Link>
-        <Link href="/problems" className="text-sm text-zinc-500 hover:text-zinc-300">Problems →</Link>
-      </div>
-
-      <h1 className="text-3xl font-bold tracking-tight">Interview Report</h1>
-      <p className="text-zinc-500 mb-8">{problem?.title} · {problem?.difficulty}</p>
-
-      {/* Overall score */}
-      <div className="grid md:grid-cols-[220px_1fr] gap-6 mb-8">
-        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 flex flex-col items-center justify-center">
-          <div className="text-6xl font-bold tabular-nums">{scores.overall}</div>
-          <div className="text-sm text-zinc-500">/ 100 overall</div>
-          <div className={`mt-2 text-sm font-medium ${overall.color}`}>{overall.label}</div>
+    <div className="app-dark">
+      <main className="container" style={{ maxWidth: 880 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: ".5rem" }}>
+          <Link href="/dashboard" className="muted" style={{ fontSize: ".85rem", textDecoration: "none" }}>← Dashboard</Link>
+          <Link href="/history" className="muted" style={{ fontSize: ".85rem", textDecoration: "none" }}>History →</Link>
         </div>
-        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 p-4">
-          <ScoreRadar data={radarData} />
-        </div>
-      </div>
 
-      {/* Dimension bars */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 mb-8">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 mb-4">Breakdown</h2>
-        <div className="space-y-4">
-          {DIM_LABELS.map((d) => {
-            const v = scores[d.key];
-            const b = band(v);
-            return (
-              <div key={d.key}>
-                <div className="flex justify-between text-sm mb-1">
-                  <span>{d.label}</span>
-                  <span className="tabular-nums text-zinc-500">{v}</span>
+        <span className="eyebrow">Evaluation</span>
+        <h1 className="page-title" style={{ marginTop: ".4rem" }}>Interview Report</h1>
+        <p className="page-sub" style={{ marginBottom: "2rem" }}>{problem?.title} · {problem?.difficulty}</p>
+
+        <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: "1.5rem", marginBottom: "1.5rem" }} className="report-top">
+          <div className="card" style={{ padding: "1.8rem", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ fontSize: "3.6rem", fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{scores.overall}</div>
+            <div className="muted" style={{ fontSize: ".85rem" }}>/ 100 overall</div>
+            <div style={{ marginTop: ".5rem", fontWeight: 600, fontSize: ".9rem", color: overall.color }}>{overall.label}</div>
+          </div>
+          <div className="card" style={{ padding: "1rem" }}>
+            <ScoreRadar data={radarData} />
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: "1.5rem", marginBottom: "1.5rem" }}>
+          <h2 className="eyebrow" style={{ marginBottom: "1.2rem" }}>Breakdown</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            {DIM_LABELS.map((d) => {
+              const v = scores[d.key];
+              return (
+                <div key={d.key}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".88rem", marginBottom: ".35rem" }}>
+                    <span>{d.label}</span>
+                    <span className="muted" style={{ fontVariantNumeric: "tabular-nums" }}>{v}</span>
+                  </div>
+                  <div className="track"><div className="fill" style={{ width: `${v}%` }} /></div>
                 </div>
-                <div className="h-2 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
-                  <div className={`h-full ${b.bar} rounded-full`} style={{ width: `${v}%` }} />
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
 
-      {/* Gemini feedback */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 mb-8">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 mb-3">
-          🤖 Interviewer Feedback
-        </h2>
-        <div className="text-sm leading-relaxed whitespace-pre-wrap text-zinc-700 dark:text-zinc-300">
-          {report.feedback}
+        <div className="card" style={{ padding: "1.5rem", marginBottom: "1.5rem" }}>
+          <h2 className="eyebrow" style={{ marginBottom: ".8rem" }}>🤖 Interviewer feedback</h2>
+          <div style={{ fontSize: ".92rem", lineHeight: 1.65, whiteSpace: "pre-wrap" }} className="muted">
+            {report.feedback}
+          </div>
         </div>
-      </div>
 
-      <div className="flex gap-3">
-        <Link href={`/problems/${session.problemId}`}
-          className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-500 text-white hover:bg-indigo-400">
-          Try this problem again
-        </Link>
-        <Link href="/dashboard"
-          className="px-4 py-2 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800">
-          View dashboard
-        </Link>
-      </div>
-    </main>
+        <div style={{ display: "flex", gap: ".8rem", flexWrap: "wrap" }}>
+          <Link href={`/problems/${session.problemId}`} className="abtn">Try this problem again</Link>
+          <Link href="/dashboard" className="abtn ghost">View dashboard</Link>
+        </div>
+      </main>
+    </div>
   );
 }

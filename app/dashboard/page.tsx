@@ -5,12 +5,12 @@ import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import TrendChart from "@/components/TrendChart";
+import RandomInterviewButton from "@/components/RandomInterviewButton";
 
 export default async function DashboardPage() {
   const { userId } = await auth();
   if (!userId) redirect("/");
 
-  // Pull this user's sessions + the problem for each, newest first.
   const sessions = await db
     .select({
       id: interviewSessions.id,
@@ -26,10 +26,7 @@ export default async function DashboardPage() {
     .where(eq(interviewSessions.userId, userId))
     .orderBy(desc(interviewSessions.startedAt));
 
-  const userSubs = await db
-    .select()
-    .from(submissions)
-    .where(eq(submissions.userId, userId));
+  const userSubs = await db.select().from(submissions).where(eq(submissions.userId, userId));
 
   const completed = sessions.filter((s) => s.score != null);
   const avgScore =
@@ -38,12 +35,8 @@ export default async function DashboardPage() {
       : null;
   const best = completed.reduce((m, s) => Math.max(m, s.score ?? 0), 0);
 
-  // Trend (oldest -> newest) for the chart
-  const trend = [...completed]
-    .reverse()
-    .map((s, i) => ({ name: `#${i + 1}`, score: s.score ?? 0 }));
+  const trend = [...completed].reverse().map((s, i) => ({ name: `#${i + 1}`, score: s.score ?? 0 }));
 
-  // Topic mastery: average score per topic
   const topicMap = new Map<string, { sum: number; n: number }>();
   for (const s of completed) {
     const t = s.topic ?? "Other";
@@ -51,126 +44,98 @@ export default async function DashboardPage() {
     topicMap.set(t, { sum: prev.sum + (s.score ?? 0), n: prev.n + 1 });
   }
   const topics = [...topicMap.entries()]
-    .map(([topic, { sum, n }]) => ({ topic, avg: Math.round(sum / n), n }))
+    .map(([topic, { sum, n }]) => ({ topic, avg: Math.round(sum / n) }))
     .sort((a, b) => b.avg - a.avg);
 
+  const recent = sessions.slice(0, 5);
+
   return (
-    <main className="max-w-5xl mx-auto p-6 md:p-10">
-      <h1 className="text-3xl font-bold tracking-tight mb-1">Dashboard</h1>
-      <p className="text-zinc-500 mb-8">Your interview performance & practice stats.</p>
+    <div className="app-dark">
+      <main className="container">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "1rem", marginBottom: "2rem" }}>
+          <div>
+            <span className="eyebrow">Your performance</span>
+            <h1 className="page-title" style={{ marginTop: ".5rem" }}>Dashboard</h1>
+            <p className="page-sub">Interview scores, trends, and practice stats.</p>
+          </div>
+          <RandomInterviewButton />
+        </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <Stat label="Interviews" value={String(sessions.length)} />
-        <Stat label="Completed" value={String(completed.length)} />
-        <Stat label="Avg Score" value={avgScore != null ? String(avgScore) : "—"} />
-        <Stat label="Best Score" value={completed.length ? String(best) : "—"} />
-      </div>
+        <div className="stat-grid" style={{ marginBottom: "1.5rem" }}>
+          <div className="card stat"><div className="num">{sessions.length}</div><div className="lbl">Interviews</div></div>
+          <div className="card stat"><div className="num">{completed.length}</div><div className="lbl">Completed</div></div>
+          <div className="card stat"><div className="num">{avgScore ?? "—"}</div><div className="lbl">Avg score</div></div>
+          <div className="card stat"><div className="num">{completed.length ? best : "—"}</div><div className="lbl">Best score</div></div>
+        </div>
 
-      {/* Trend */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 mb-8">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 mb-4">
-          Score Trend
-        </h2>
-        <TrendChart data={trend} />
-      </div>
+        <div className="card" style={{ padding: "1.5rem", marginBottom: "1.5rem" }}>
+          <h2 className="eyebrow" style={{ marginBottom: "1rem" }}>Score trend</h2>
+          <TrendChart data={trend} />
+        </div>
 
-      <div className="grid md:grid-cols-2 gap-6 mb-8">
-        {/* Topic mastery */}
-        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 mb-4">
-            Topic Mastery
-          </h2>
-          {topics.length === 0 ? (
-            <p className="text-sm text-zinc-500">Complete an interview to see topic mastery.</p>
-          ) : (
-            <div className="space-y-3">
-              {topics.map((t) => (
-                <div key={t.topic}>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>{t.topic}</span>
-                    <span className="text-zinc-500 tabular-nums">{t.avg}</span>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem", marginBottom: "1.5rem" }} className="dash-two">
+          <div className="card" style={{ padding: "1.5rem" }}>
+            <h2 className="eyebrow" style={{ marginBottom: "1.2rem" }}>Topic mastery</h2>
+            {topics.length === 0 ? (
+              <p className="muted" style={{ fontSize: ".9rem" }}>Complete an interview to see topic mastery.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: ".9rem" }}>
+                {topics.map((t) => (
+                  <div key={t.topic}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".85rem", marginBottom: ".35rem" }}>
+                      <span>{t.topic}</span>
+                      <span className="muted" style={{ fontVariantNumeric: "tabular-nums" }}>{t.avg}</span>
+                    </div>
+                    <div className="track"><div className="fill" style={{ width: `${t.avg}%` }} /></div>
                   </div>
-                  <div className="h-2 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
-                    <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${t.avg}%` }} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="card" style={{ padding: "1.5rem" }}>
+            <h2 className="eyebrow" style={{ marginBottom: "1.2rem" }}>Coding practice</h2>
+            <div style={{ fontSize: "2.6rem", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{userSubs.length}</div>
+            <p className="muted" style={{ fontSize: ".9rem" }}>solutions submitted for AI review</p>
+            <Link href="/problems" className="link-accent" style={{ display: "inline-block", marginTop: "1rem", fontSize: ".9rem" }}>Practice more →</Link>
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: "1.5rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".5rem" }}>
+            <h2 className="eyebrow">Recent interviews</h2>
+            <Link href="/history" className="link-accent" style={{ fontSize: ".85rem" }}>View all →</Link>
+          </div>
+          {sessions.length === 0 ? (
+            <p className="muted" style={{ fontSize: ".9rem", paddingTop: ".5rem" }}>
+              No interviews yet. <Link href="/problems" className="link-accent">Start your first one.</Link>
+            </p>
+          ) : (
+            <div>
+              {recent.map((s) => (
+                <div className="row" key={s.id}>
+                  <div>
+                    <div style={{ fontWeight: 700 }}>{s.problemTitle ?? "Problem"}</div>
+                    <div className="muted" style={{ fontSize: ".78rem", marginTop: ".15rem" }}>
+                      {s.difficulty} · {s.topic} · {s.phase === "COMPLETED" ? "Completed" : `In progress`}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "1.2rem" }}>
+                    {s.score != null ? (
+                      <span style={{ fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{s.score}</span>
+                    ) : (
+                      <span className="muted" style={{ fontSize: ".78rem" }}>—</span>
+                    )}
+                    <Link href={s.phase === "COMPLETED" ? `/interview/${s.id}/report` : `/interview/${s.id}`} className="link-accent" style={{ fontSize: ".85rem" }}>
+                      {s.phase === "COMPLETED" ? "Report" : "Resume"}
+                    </Link>
                   </div>
                 </div>
               ))}
             </div>
           )}
         </div>
-
-        {/* Practice */}
-        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 mb-4">
-            Coding Practice
-          </h2>
-          <div className="text-4xl font-bold tabular-nums mb-1">{userSubs.length}</div>
-          <p className="text-sm text-zinc-500">solutions submitted for AI review</p>
-          <Link href="/problems" className="inline-block mt-4 text-sm text-indigo-500 hover:underline">
-            Practice more →
-          </Link>
-        </div>
-      </div>
-
-      {/* Recent interviews */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Recent Interviews
-          </h2>
-          <Link href="/problems" className="text-sm text-indigo-500 hover:underline">
-            New interview
-          </Link>
-        </div>
-        {sessions.length === 0 ? (
-          <p className="text-sm text-zinc-500">
-            No interviews yet.{" "}
-            <Link href="/problems" className="text-indigo-500 hover:underline">
-              Start your first one.
-            </Link>
-          </p>
-        ) : (
-          <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
-            {sessions.map((s) => (
-              <li key={s.id} className="py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium">{s.problemTitle ?? "Problem"}</div>
-                  <div className="text-xs text-zinc-500">
-                    {s.difficulty} · {s.topic} ·{" "}
-                    {s.phase === "COMPLETED" ? "Completed" : `In progress (${s.phase})`}
-                  </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  {s.score != null ? (
-                    <span className="text-sm font-semibold tabular-nums">{s.score}</span>
-                  ) : (
-                    <span className="text-xs text-zinc-500">—</span>
-                  )}
-                  {s.phase === "COMPLETED" ? (
-                    <Link href={`/interview/${s.id}/report`} className="text-xs text-indigo-500 hover:underline">
-                      Report
-                    </Link>
-                  ) : (
-                    <Link href={`/interview/${s.id}`} className="text-xs text-indigo-500 hover:underline">
-                      Resume
-                    </Link>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </main>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 p-5">
-      <div className="text-3xl font-bold tabular-nums">{value}</div>
-      <div className="text-xs text-zinc-500 mt-1">{label}</div>
+      </main>
     </div>
   );
 }
