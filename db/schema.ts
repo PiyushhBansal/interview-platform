@@ -19,6 +19,10 @@ export const problems = pgTable("problems", {
   description: text("description").notNull(),
   difficulty: varchar("difficulty", { length: 20 }).notNull(),
   topic: varchar("topic", { length: 50 }).notNull(),
+  // [{ input, output, explanation }]
+  examples: jsonb("examples"),
+  constraints: text("constraints"),
+  optimalComplexity: varchar("optimal_complexity", { length: 100 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

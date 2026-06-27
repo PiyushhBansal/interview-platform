@@ -161,13 +161,16 @@ export async function generateReport(sessionId: number) {
 
   const silent = (session.silentCheck as { isCorrect: boolean; bug: string } | null) ?? null;
 
-  const { scores, features } = scoreInterview(ans, silent ? silent.isCorrect : null);
+  // Rule-based features (ML v1) kept for analytics / the data flywheel.
+  const { features } = scoreInterview(ans, silent ? silent.isCorrect : null);
 
-  const feedback = await generateEvaluation({
+  // LLM produces the spec's 6-category report card (each /10).
+  const evaluation = await generateEvaluation({
     problem: {
       title: problem.title,
       difficulty: problem.difficulty,
       description: problem.description,
+      optimalComplexity: problem.optimalComplexity,
     },
     approach: ans.approach,
     dryRun: ans.dryRun,
@@ -182,15 +185,22 @@ export async function generateReport(sessionId: number) {
   await db.delete(interviewReports).where(eq(interviewReports.sessionId, sessionId));
   await db.insert(interviewReports).values({
     sessionId,
-    scores,
-    feedback,
+    scores: {
+      categories: evaluation.categories,
+      overall: evaluation.overall,
+      rating: evaluation.rating,
+      strengths: evaluation.strengths,
+      weaknesses: evaluation.weaknesses,
+    },
+    feedback: evaluation.feedback,
     mlFeatures: features,
   });
 
+  // Store overall on a 0-100 scale for dashboard/history consistency.
   await db
     .update(interviewSessions)
-    .set({ totalScore: scores.overall, currentPhase: "COMPLETED", endedAt: new Date() })
+    .set({ totalScore: evaluation.overall * 10, currentPhase: "COMPLETED", endedAt: new Date() })
     .where(eq(interviewSessions.id, sessionId));
 
-  return { scores, feedback };
+  return { evaluation };
 }

@@ -7,7 +7,33 @@ type ProblemCtx = {
   title: string;
   difficulty: string;
   description: string;
+  optimalComplexity?: string | null;
 };
+
+/**
+ * The interviewer persona + stage logic. Prepended to every conversational call
+ * so the model behaves like one consistent human interviewer across phases.
+ */
+export const INTERVIEWER_SYSTEM_PROMPT = `You are "Loop", a senior software engineer conducting a real DSA technical interview at a top tech company.
+
+PERSONA:
+- Warm, calm, and human — like a good interviewer who wants the candidate to succeed.
+- Conversational, never robotic. Short responses (1-3 sentences). You speak out loud.
+- You react to what the candidate actually says — never read from a script.
+- You probe, you never lecture. You ask leading questions instead of giving answers.
+
+INTERVIEW STAGES (you guide the candidate through these in order):
+1. Greeting + present the problem.
+2. Approach discussion — let them explain before coding. Ask "why this approach?", "what's the time/space complexity?", "what edge cases matter?".
+3. Optimization push — if their first idea is brute force, nudge: "can you do better than O(n^2)?".
+4. Coding — stay mostly quiet while they write; offer light encouragement.
+5. Dry run — have them trace their code on an example; if there's a bug, ask a question that exposes it rather than pointing it out.
+6. Wrap up — "anything you'd improve with more time?".
+
+RULES:
+- Never reveal the optimal solution or whether their code is correct. Lead them to discover it.
+- One question at a time. Keep it tight and natural.
+- Be encouraging even when pushing back.`;
 
 async function gen(prompt: string): Promise<string> {
   const res = await ai.models.generateContent({ model: MODEL, contents: prompt });
@@ -38,9 +64,9 @@ export async function getApproachFollowUp(
   if (!candidateApproach.trim()) {
     return "Take your time — how would you start thinking about this problem?";
   }
-  const prompt = `You are a friendly but sharp technical interviewer at a top tech company.
-The candidate is solving this problem:
+  const prompt = `${INTERVIEWER_SYSTEM_PROMPT}
 
+CURRENT PROBLEM:
 Title: ${problem.title}
 Difficulty: ${problem.difficulty}
 Description: ${problem.description}
@@ -48,9 +74,9 @@ Description: ${problem.description}
 The candidate just explained their approach:
 """${candidateApproach}"""
 
-Ask exactly ONE short, probing follow-up question (one or two sentences max) that pushes them
-to justify a choice, consider a trade-off, or handle an edge case. Do not solve it for them.
-Do not preface with "Great" repeatedly. Output ONLY the question text, nothing else.`;
+You are in the APPROACH stage. Ask exactly ONE short, probing follow-up question (one or two
+sentences) that pushes them to justify a choice, consider a trade-off, or handle an edge case.
+Output ONLY the spoken question text, nothing else.`;
   const q = await gen(prompt);
   return q || "Why did you choose that approach over the alternatives?";
 }
@@ -96,9 +122,43 @@ Respond with ONLY a JSON object:
   });
 }
 
+export type CategoryScores = {
+  problemUnderstanding: number;
+  approachCommunication: number;
+  correctness: number;
+  complexityAnalysis: number;
+  optimization: number;
+  codeQuality: number;
+};
+
+export type Evaluation = {
+  categories: CategoryScores; // each /10
+  overall: number; // /10
+  rating: string; // e.g. "Strong Hire", "Lean Hire", "No Hire"
+  strengths: string[];
+  weaknesses: string[];
+  feedback: string; // actionable summary paragraph
+};
+
+const EMPTY_EVAL: Evaluation = {
+  categories: {
+    problemUnderstanding: 0,
+    approachCommunication: 0,
+    correctness: 0,
+    complexityAnalysis: 0,
+    optimization: 0,
+    codeQuality: 0,
+  },
+  overall: 0,
+  rating: "Incomplete",
+  strengths: [],
+  weaknesses: ["The interview ended without enough signal to evaluate."],
+  feedback: "Not enough was discussed or written to produce a full evaluation. Try a full run-through next time.",
+};
+
 /**
- * EVALUATION phase: qualitative end-of-interview feedback (the words).
- * Numbers come from the rule-based scorer; this complements them.
+ * Final evaluation prompt — produces the spec's 6-category report card (each /10),
+ * an overall rating, strengths, weaknesses, and actionable feedback.
  */
 export async function generateEvaluation(input: {
   problem: ProblemCtx;
@@ -109,38 +169,72 @@ export async function generateEvaluation(input: {
   code: string;
   language: string;
   silentCheck: { isCorrect: boolean; bug: string } | null;
-}): Promise<string> {
-  const prompt = `You are a senior interviewer writing end-of-interview feedback for a candidate.
-Be warm, specific, and constructive. 150-220 words. Use short paragraphs or bullet points.
+}): Promise<Evaluation> {
+  const prompt = `You are a senior engineer writing a structured evaluation of a candidate's DSA interview.
+Be fair, specific, and grounded ONLY in what the candidate actually said and wrote. Do not invent strengths.
 
 PROBLEM: ${input.problem.title} (${input.problem.difficulty})
 ${input.problem.description}
+Optimal complexity: ${input.problem.optimalComplexity ?? "unspecified"}
 
-CANDIDATE'S APPROACH EXPLANATION:
-"""${input.approach || "(none given)"}"""
-
-CANDIDATE'S DRY RUN:
-"""${input.dryRun || "(none given)"}"""
-
-CANDIDATE'S COMPLEXITY ANALYSIS:
-"""${input.complexity || "(none given)"}"""
-
-CANDIDATE'S WRAP-UP:
-"""${input.wrapUp || "(none given)"}"""
+TRANSCRIPT OF WHAT THE CANDIDATE SAID:
+- Approach: """${input.approach || "(nothing)"}"""
+- Dry run: """${input.dryRun || "(nothing)"}"""
+- Complexity: """${input.complexity || "(nothing)"}"""
+- Wrap-up: """${input.wrapUp || "(nothing)"}"""
 
 FINAL CODE (${input.language}):
 \`\`\`${input.language}
-${input.code || "(no code)"}
+${input.code || "(no code written)"}
 \`\`\`
 
-INTERNAL CODE CHECK (do not quote verbatim): ${
+INTERNAL CODE CHECK (use to judge correctness; do not quote verbatim): ${
     input.silentCheck
       ? `correct=${input.silentCheck.isCorrect}, issue=${input.silentCheck.bug}`
       : "not run"
   }
 
-Cover: (1) communication of approach, (2) code correctness & quality, (3) complexity analysis,
-(4) one concrete thing to improve next time. End on an encouraging note.`;
-  const out = await gen(prompt);
-  return out || "Thanks for completing the interview! Keep practicing your verbal explanations alongside your coding.";
+Score these SIX categories, each an integer 0-10:
+- problemUnderstanding: did they clarify requirements, inputs/outputs, constraints?
+- approachCommunication: clarity and structure of their verbal explanation.
+- correctness: does the code actually solve it (use the internal check)?
+- complexityAnalysis: did they state correct time AND space complexity?
+- optimization: did they reach (or move toward) the optimal solution?
+- codeQuality: readability, naming, edge-case handling.
+
+Respond with ONLY this JSON (no markdown):
+{
+  "categories": { "problemUnderstanding": 0, "approachCommunication": 0, "correctness": 0, "complexityAnalysis": 0, "optimization": 0, "codeQuality": 0 },
+  "overall": 0,
+  "rating": "Strong Hire | Hire | Lean Hire | Lean No-Hire | No Hire",
+  "strengths": ["2-4 specific, true strengths"],
+  "weaknesses": ["2-4 specific, actionable gaps"],
+  "feedback": "3-5 sentence actionable summary, warm but honest."
+}`;
+
+  const raw = await gen(prompt);
+  const parsed = parseJson<Evaluation>(raw, EMPTY_EVAL);
+  // Clamp & sanity-fill in case the model returns partial data.
+  const c = parsed.categories || EMPTY_EVAL.categories;
+  const clamp = (n: number) => Math.max(0, Math.min(10, Math.round(Number(n) || 0)));
+  const categories: CategoryScores = {
+    problemUnderstanding: clamp(c.problemUnderstanding),
+    approachCommunication: clamp(c.approachCommunication),
+    correctness: clamp(c.correctness),
+    complexityAnalysis: clamp(c.complexityAnalysis),
+    optimization: clamp(c.optimization),
+    codeQuality: clamp(c.codeQuality),
+  };
+  const vals = Object.values(categories);
+  const overall = parsed.overall
+    ? clamp(parsed.overall)
+    : Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  return {
+    categories,
+    overall,
+    rating: parsed.rating || "Evaluated",
+    strengths: Array.isArray(parsed.strengths) ? parsed.strengths.slice(0, 4) : [],
+    weaknesses: Array.isArray(parsed.weaknesses) ? parsed.weaknesses.slice(0, 4) : [],
+    feedback: parsed.feedback || "Evaluation complete.",
+  };
 }

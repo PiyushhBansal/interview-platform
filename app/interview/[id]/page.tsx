@@ -53,6 +53,9 @@ export default async function InterviewPage({
         description: problem.description,
         difficulty: problem.difficulty,
         topic: problem.topic,
+        examples: (problem.examples as { input: string; output: string; explanation?: string }[] | null) ?? [],
+        constraints: problem.constraints,
+        optimalComplexity: problem.optimalComplexity,
       }}
       initialPhase={session.currentPhase}
       initialCode={session.finalCode}

@@ -61,7 +61,16 @@ export default function InterviewRoom({
   initialLanguage,
 }: {
   sessionId: number;
-  problem: { id: number; title: string; description: string; difficulty: string; topic: string };
+  problem: {
+    id: number;
+    title: string;
+    description: string;
+    difficulty: string;
+    topic: string;
+    examples: { input: string; output: string; explanation?: string }[];
+    constraints: string | null;
+    optimalComplexity: string | null;
+  };
   initialPhase: Phase;
   initialCode: string | null;
   initialLanguage: string | null;
@@ -75,7 +84,24 @@ export default function InterviewRoom({
   const [followUp, setFollowUp] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [speaking, setSpeaking] = useState(true);
+  const [voiceOn, setVoiceOn] = useState(true);
   const [elapsed, setElapsed] = useState(0);
+
+  // ---- AI voice (browser SpeechSynthesis, free, no key) ----
+  function speak(text: string) {
+    if (!voiceOn || typeof window === "undefined" || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.02;
+    u.pitch = 1;
+    const voices = window.speechSynthesis.getVoices();
+    // Prefer a natural English voice if available.
+    const pref = voices.find((v) => /Google US English|Samantha|Daniel|Microsoft/.test(v.name) && v.lang.startsWith("en"));
+    if (pref) u.voice = pref;
+    u.onstart = () => setSpeaking(true);
+    u.onend = () => setSpeaking(false);
+    window.speechSynthesis.speak(u);
+  }
 
   // Voice scaffold
   const [micOn, setMicOn] = useState(false);
@@ -86,17 +112,72 @@ export default function InterviewRoom({
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
+  // Permission gate + live camera
+  const [granted, setGranted] = useState(false);
+  const [permError, setPermError] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const camStreamRef = useRef<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cornerVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  async function requestPermissions() {
+    setRequesting(true);
+    setPermError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      camStreamRef.current = stream;
+      setGranted(true);
+      setMicOn(true);
+      setCamOn(true);
+      // Set up the mic recorder from this stream's audio track.
+      const mr = new MediaRecorder(new MediaStream(stream.getAudioTracks()));
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        chunksRef.current = [];
+        if (blob.size > 0) await transcribeBlob(blob);
+      };
+      mediaRef.current = mr;
+    } catch {
+      setPermError("Camera and microphone access are required to start the interview. Please allow both and try again.");
+    } finally {
+      setRequesting(false);
+    }
+  }
+
+  // Attach the camera stream to whichever video element is mounted.
+  useEffect(() => {
+    if (granted && videoRef.current && camStreamRef.current) {
+      videoRef.current.srcObject = camStreamRef.current;
+    }
+    if (granted && cornerVideoRef.current && camStreamRef.current) {
+      cornerVideoRef.current.srcObject = camStreamRef.current;
+    }
+  });
+
+  useEffect(() => {
+    return () => {
+      camStreamRef.current?.getTracks().forEach((t) => t.stop());
+      if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
+    };
+  }, []);
+
   useEffect(() => {
     const t = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(t);
   }, []);
 
   useEffect(() => {
-    setSpeaking(true);
-    const t = setTimeout(() => setSpeaking(false), 3500);
     setFollowUp(null);
     setAnswer("");
-    return () => clearTimeout(t);
+    const line = SCRIPT[phase]?.line;
+    if (line) speak(line);
+    else {
+      setSpeaking(true);
+      const t = setTimeout(() => setSpeaking(false), 3000);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
@@ -130,6 +211,7 @@ export default function InterviewRoom({
         await advancePhase(sessionId); // -> SILENT_CHECK
         const { hint: h } = await runSilentCheckAction({ sessionId, code, language });
         setHint(h);
+        speak(h);
         const { phase: p2 } = await advancePhase(sessionId); // -> DRY_RUN
         setPhase(p2 as Phase);
         return;
@@ -149,6 +231,7 @@ export default function InterviewRoom({
       await saveAnswer({ sessionId, phase, transcript: answer });
       const { question } = await getFollowUp({ sessionId, approach: answer });
       setFollowUp(question);
+      speak(question);
     } finally {
       setBusy(false);
     }
@@ -199,30 +282,13 @@ export default function InterviewRoom({
     }
   }
 
-  async function toggleMic() {
-    if (micOn) {
+  function toggleMic() {
+    const n = !micOn;
+    setMicOn(n);
+    camStreamRef.current?.getAudioTracks().forEach((t) => (t.enabled = n));
+    if (!n && recording) {
       mediaRef.current?.stop();
-      mediaRef.current?.stream.getTracks().forEach((t) => t.stop());
-      setMicOn(false);
       setRecording(false);
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream);
-      mr.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      mr.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        chunksRef.current = [];
-        if (blob.size > 0) await transcribeBlob(blob);
-      };
-      mediaRef.current = mr;
-      setMicOn(true);
-      setVoiceMsg("Mic on. Hit Record, speak your answer, then Stop — it'll be transcribed into the box.");
-    } catch {
-      setVoiceMsg("Microphone permission denied or unavailable.");
     }
   }
 
@@ -249,8 +315,45 @@ export default function InterviewRoom({
       (phase === "SILENT_CHECK" && s.key === "CODING")
   );
 
+  if (!granted) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950 text-zinc-100 p-6">
+        <div className="max-w-md w-full rounded-2xl border border-violet-500/20 bg-zinc-900/70 backdrop-blur p-8 text-center">
+          <div className="h-16 w-16 mx-auto rounded-2xl grid place-items-center text-3xl mb-5"
+            style={{ background: "radial-gradient(circle at 30% 25%, #22d3ee, #7c3aed)" }}>🎥</div>
+          <h1 className="text-2xl font-bold tracking-tight mb-2">Ready for your interview?</h1>
+          <p className="text-sm text-zinc-400 mb-1">
+            <strong>{problem.title}</strong> · {problem.difficulty} · {problem.topic}
+          </p>
+          <p className="text-sm text-zinc-400 mb-6">
+            We need your <strong>camera</strong> and <strong>microphone</strong> to run a realistic interview.
+            Nothing starts until you grant both.
+          </p>
+          <div className="flex items-center justify-center gap-6 mb-6 text-xs text-zinc-500">
+            <span>🎤 Microphone</span><span>📹 Camera</span><span>🔊 AI voice</span>
+          </div>
+          {permError && (
+            <p className="text-sm text-red-400 mb-4">{permError}</p>
+          )}
+          <button onClick={requestPermissions} disabled={requesting}
+            className="w-full px-5 py-3 rounded-xl text-sm font-semibold bg-gradient-to-r from-violet-600 to-violet-400 text-white hover:from-violet-500 hover:to-violet-300 disabled:opacity-50">
+            {requesting ? "Requesting access…" : "Allow camera & mic, then start"}
+          </button>
+          <button onClick={() => router.push("/problems")}
+            className="mt-3 text-xs text-zinc-500 hover:text-zinc-300">Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950 text-zinc-100">
+      {/* Live camera tile (candidate) */}
+      <div className="absolute bottom-20 right-4 z-30 w-44 rounded-xl overflow-hidden border border-zinc-700 shadow-2xl bg-black">
+        <video ref={cornerVideoRef} autoPlay muted playsInline className="w-full h-28 object-cover" style={{ transform: "scaleX(-1)", display: camOn ? "block" : "none" }} />
+        {!camOn && <div className="w-full h-28 grid place-items-center text-zinc-600 text-xs">camera off</div>}
+        <div className="px-2 py-1 text-[10px] text-zinc-400 bg-zinc-900">You</div>
+      </div>
       {/* Top bar */}
       <header className="flex items-center justify-between px-5 py-3 border-b border-zinc-800 bg-zinc-900/60 backdrop-blur">
         <div className="flex items-center gap-3">
@@ -300,14 +403,28 @@ export default function InterviewRoom({
             </section>
             <section>
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-2">Examples</h3>
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 font-mono text-xs text-zinc-400 min-h-[84px]">
-                <div className="text-zinc-600 italic">Sample input / output will appear here.</div>
+              <div className="space-y-2.5">
+                {problem.examples.length === 0 && (
+                  <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-600 italic">No examples provided.</div>
+                )}
+                {problem.examples.map((ex, i) => (
+                  <div key={i} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 font-mono text-xs">
+                    <div className="text-zinc-500 mb-1">Example {i + 1}</div>
+                    <div><span className="text-cyan-400">Input:</span> <span className="text-zinc-300">{ex.input}</span></div>
+                    <div><span className="text-violet-400">Output:</span> <span className="text-zinc-300">{ex.output}</span></div>
+                    {ex.explanation && (
+                      <div className="mt-1 text-zinc-500 not-italic" style={{ fontFamily: "inherit" }}>
+                        {ex.explanation}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </section>
             <section>
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-2">Constraints</h3>
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-400 min-h-[56px]">
-                <div className="text-zinc-600 italic">Constraints will appear here.</div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-400 whitespace-pre-wrap font-mono">
+                {problem.constraints || "No constraints provided."}
               </div>
             </section>
           </div>
@@ -408,7 +525,7 @@ export default function InterviewRoom({
               micOn ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"].join(" ")}>
             <span>{micOn ? "🎤" : "🔇"}</span>{micOn ? "Mic on" : "Mic off"}
           </button>
-          <button onClick={() => setCamOn((v) => !v)}
+          <button onClick={() => { const n = !camOn; setCamOn(n); camStreamRef.current?.getVideoTracks().forEach((t) => (t.enabled = n)); }}
             className={["flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors",
               camOn ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"].join(" ")}>
             <span>{camOn ? "📹" : "🚫"}</span>{camOn ? "Video on" : "Video off"}
@@ -418,6 +535,12 @@ export default function InterviewRoom({
               recording ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/40" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"].join(" ")}>
             <span className={["h-2 w-2 rounded-full", recording ? "bg-red-500 animate-pulse" : "bg-zinc-500"].join(" ")} />
             {recording ? "Recording" : "Record"}
+          </button>
+          <button onClick={() => { const n = !voiceOn; setVoiceOn(n); if (!n && window.speechSynthesis) window.speechSynthesis.cancel(); }}
+            className={["flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors",
+              voiceOn ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"].join(" ")}
+            title="AI interviewer voice">
+            <span>{voiceOn ? "🔊" : "🔈"}</span>{voiceOn ? "AI voice on" : "AI voice off"}
           </button>
           {voiceMsg && <span className="ml-2 text-[10px] text-zinc-500 max-w-[280px] truncate">{voiceMsg}</span>}
         </div>
