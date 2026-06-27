@@ -32,6 +32,12 @@ export default function RootLayout({
               >
                 Problems
               </Link>
+              <Link
+                href="/dashboard"
+                className="text-sm font-medium text-gray-500 hover:text-gray-700"
+              >
+                Dashboard
+              </Link>
             </div>
             <div className="flex items-center gap-3">
               <Show when="signed-out">

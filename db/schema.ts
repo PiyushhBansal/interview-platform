@@ -44,3 +44,28 @@ export const interviewSessions = pgTable("interview_sessions", {
   startedAt: timestamp("started_at").defaultNow().notNull(),
   endedAt: timestamp("ended_at"),
 });
+
+// One row per spoken/typed answer the candidate gives in a phase.
+// audioUrl is reserved for the voice layer (Deepgram/R2) — null until then.
+export const interviewAnswers = pgTable("interview_answers", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id")
+    .notNull()
+    .references(() => interviewSessions.id),
+  phase: interviewPhaseEnum("phase").notNull(),
+  transcript: text("transcript"),
+  audioUrl: text("audio_url"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Final multi-dimensional report: rule-based scores + Gemini qualitative feedback.
+export const interviewReports = pgTable("interview_reports", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id")
+    .notNull()
+    .references(() => interviewSessions.id),
+  scores: jsonb("scores").notNull(),
+  feedback: text("feedback").notNull(),
+  mlFeatures: jsonb("ml_features"),
+  generatedAt: timestamp("generated_at").defaultNow().notNull(),
+});

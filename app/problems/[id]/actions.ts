@@ -6,6 +6,19 @@ import { eq } from "drizzle-orm";
 import { GoogleGenAI } from "@google/genai";
 import { auth } from "@clerk/nextjs/server";
 
+const PHASE_ORDER = [
+  "INTRO",
+  "APPROACH",
+  "TRANSITION_TO_CODE",
+  "CODING",
+  "SILENT_CHECK",
+  "DRY_RUN",
+  "COMPLEXITY",
+  "WRAP_UP",
+  "EVALUATION",
+  "COMPLETED",
+] as const;
+
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
@@ -96,4 +109,68 @@ export async function startInterview(input: { problemId:number}){
   const [session] = await db.insert(interviewSessions).values({userId,problemId:input.problemId}).returning();
 
   return {sessionId : session.id};
+}
+
+export async function advancePhase(sessionId: number) {
+  const { userId } = await auth();
+  if (!userId) {
+    throw new Error("Not signed in.");
+  }
+
+  const [session] = await db
+    .select()
+    .from(interviewSessions)
+    .where(eq(interviewSessions.id, sessionId));
+
+  if (!session) {
+    throw new Error("Interview session not found.");
+  }
+  if (session.userId !== userId) {
+    throw new Error("This interview does not belong to you.");
+  }
+
+  const currentIndex = PHASE_ORDER.indexOf(session.currentPhase);
+  const nextPhase = PHASE_ORDER[currentIndex + 1] ?? "COMPLETED";
+
+  await db
+    .update(interviewSessions)
+    .set({
+      currentPhase: nextPhase,
+      ...(nextPhase === "COMPLETED" ? { endedAt: new Date() } : {}),
+    })
+    .where(eq(interviewSessions.id, sessionId));
+
+  return { phase: nextPhase };
+}
+
+export async function saveInterviewCode(input: {
+  sessionId: number;
+  code: string;
+  language: string;
+}) {
+  const { userId } = await auth();
+  if (!userId) {
+    throw new Error("Not signed in.");
+  }
+
+  await db
+    .update(interviewSessions)
+    .set({ finalCode: input.code, language: input.language })
+    .where(eq(interviewSessions.id, input.sessionId));
+
+  return { ok: true };
+}
+
+export async function endInterview(sessionId: number) {
+  const { userId } = await auth();
+  if (!userId) {
+    throw new Error("Not signed in.");
+  }
+
+  await db
+    .update(interviewSessions)
+    .set({ currentPhase: "COMPLETED", endedAt: new Date() })
+    .where(eq(interviewSessions.id, sessionId));
+
+  return { phase: "COMPLETED" as const };
 }
